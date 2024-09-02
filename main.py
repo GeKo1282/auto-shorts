@@ -196,3 +196,4 @@ if __name__ == "__main__":
     main()
 
 # TODO: Add indentation to subtitles
+# TODO: Create per-word subtitle clips, then combine them into a single subtitle clip by measuring their positions.
