@@ -1,10 +1,14 @@
 import os, json, math
 from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, clips_array, ColorClip, AudioFileClip
-from typing import Tuple
+from typing import Tuple, List, Union, Dict
 
 # Temporary
-LIMIT_SECONDS = 59
+INTERPUNCTION = [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'"]
+LIMIT_SECONDS = 60
+FPS = 15
+LIMIT_SUB_WORDS = None
 SUBTITLE_PAGE_CHARACTER_LIMIT = 8
+FONT_PATH = os.path.abspath("KOMIKAX_.ttf")
 RESOLUTIONS = [
     144,
     240,
@@ -16,25 +20,38 @@ RESOLUTIONS = [
     2160
 ]
 
+def check_magick():
+    if os.system("magick --version") != 0:
+        print("Error: ImageMagick is not installed. Please install it before running the script.")
+        return False
+
+    return True
+
 def clip_max_crop(clip_height, clip_width, ratio, zoom):
     """Find the maximum dimensions that clip can be cropped to for specified ratio."""
 
     return (int(clip_height / zoom), int(clip_height * ratio / zoom)) if clip_height * ratio <= clip_width else (int(clip_width / ratio / zoom), int(clip_width / zoom))
 
-def compile_background():
-    clips = [{
-        "clip": VideoFileClip(f"source/{os.listdir('source')[0]}"),
-        "weight": 39,
-        "zoom": 1.5
-    }, {
-        "clip": None,
-        "weight": 1,
-        "zoom": 1
-    },{
-        "clip": VideoFileClip(f"source/{os.listdir('source')[1]}"),
-        "weight": 60,
-        "zoom": 1
-    }]
+def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, int]]]):
+    clips = []
+
+    for clip in source_clips:
+        if isinstance(clip["clip"], str):
+            clips.append({
+                "clip": VideoFileClip(clip["clip"]),
+                "weight": clip["weight"],
+                "zoom": clip["zoom"]
+            })
+        else:
+            clips.append(clip)
+
+        clips.append({
+            "clip": None,
+            "weight": 1,
+            "zoom": 1
+        })
+
+    clips = clips[:-1]
 
     final_clip = {
         "ratio": 9 / 16,
@@ -118,11 +135,37 @@ def compile_background():
 
     return final_clip
 
-def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int]):
+def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], font_size: int = 170, font_color: str = "white", stroke_color: Tuple[int, int, int] = "black", stroke_width: int = 7, *, fix_interpunction: bool = True, fixed_inter_path: str = None):
+    def find_leading_interpunction(text: str):
+        final_interpunction = ""
+        
+        while any([text.startswith(i) for i in INTERPUNCTION]):
+            found_interpunction = None
+            
+            for i in INTERPUNCTION:
+                if text.startswith(i):
+                    found_interpunction = i
+                    break
+
+            if found_interpunction:
+                final_interpunction += found_interpunction
+                text = text.removeprefix(i).strip()
+
+        return final_interpunction, text
+    
+    if fix_interpunction and not fixed_inter_path:
+        print("Error: You must provide a path to the fixed interpunction file.")
+        return
+    
     with open(sub_file_path, "r") as f:
         subs = f.read()
 
-    subs = subs.split("\n\n")
+    with open(fixed_inter_path, "r") as f:
+        fixed_inter = f.read()
+
+    fixed_inter = fixed_inter.replace("\n", " ").strip()
+
+    subs = subs.split("\n\n")[:LIMIT_SUB_WORDS]
     subtitles = []
 
     for sub in subs:
@@ -130,7 +173,25 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int]):
             continue
 
         start, end = sub.split("\n")[0].split(" --> ")
-        text = sub.replace(f"{start} --> {end}\n", "")
+        text = sub.replace(f"{start} --> {end}\n", "").strip()
+
+        if fix_interpunction:
+            fixed_inter = fixed_inter.strip()
+
+            leading_interpunction, fixed_inter = find_leading_interpunction(fixed_inter)
+            fixed_inter = fixed_inter.removeprefix(text)
+            
+            trailing_interpunction = ""
+            while any([fixed_inter.startswith(i) for i in INTERPUNCTION]):
+                trailing_interpunction += fixed_inter[0]
+                fixed_inter = fixed_inter[1:]
+
+                if fixed_inter.startswith(" "):
+                    break
+
+            fixed_inter = fixed_inter.removeprefix(trailing_interpunction).strip()
+
+            text = f"{leading_interpunction}{text}{trailing_interpunction}"
 
         start = start.split(":")
         end = end.split(":")
@@ -150,7 +211,7 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int]):
         if not subtitles:
             break
 
-        if sum([len(sub['text']) for sub in pages[-1]]) + len(subtitles[0]) >= SUBTITLE_PAGE_CHARACTER_LIMIT and len(pages[-1]) > 0:
+        if len(pages[-1]) > 0 and (sum([len(sub['text']) for sub in pages[-1]]) + len(subtitles[0]['text']) >= SUBTITLE_PAGE_CHARACTER_LIMIT or any([pages[-1][-1]['text'].endswith(i) for i in INTERPUNCTION])):
             pages.append([])
 
         sub = subtitles.pop(0)
@@ -160,36 +221,37 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int]):
 
     for page in pages:
         page_text = " ".join([sub["text"] for sub in page])
-        subclips = []
-        for sub in page:
-            text_clip = TextClip(page_text, fontsize=170, color='white', size=(video_dimentions[0], None), method='caption', font="Cantarell-Bold")
 
-            text_clip.set_position(("center", "center")).set_duration(sub["end"] - sub["start"])
+        clips.append(TextClip(page_text, fontsize=font_size, color=font_color, stroke_color=stroke_color, stroke_width=stroke_width, size=(video_dimentions[0], None), method='caption', font=FONT_PATH).set_duration(page[-1]["end"] - page[0]["start"]).set_start(page[0]["start"]).set_position(("center", "center")))
 
-            subclips.append(text_clip)
+        print(f"Subtitle clips created: {len(clips)}/{len(pages)}", end=("\r" if len(clips) != len(pages) else "\n"))
 
-            print(f"Subtitle clips created: {len(clips)}/{sum([len(page) for page in pages])}", end=("\r" if len(clips) != sum([len(page) for page in pages]) else "\n"))
-
-        clips.append(CompositeVideoClip(subclips).set_duration(page[-1]["end"] - page[0]["start"]).set_start(page[0]["start"]).set_position(("center", "center")))
-    
     print("Subtitles compiled.")
 
     return clips
 
 def compile_final():
-    background_clip = compile_background()
-    subtitle_clips = compile_subtitles("out.vtt", (background_clip["desired_width"], background_clip["desired_height"]))
+    background_clip = compile_background(*[{k:v for k, v in zip(("clip", "weight", "zoom"), (path, weight, zoom))} for path, weight, zoom in zip(
+        [f"source/{p}" for p in os.listdir("source")],
+        [39, 60],
+        [1.5, 1]
+    )])
+    subtitle_clips = compile_subtitles("audio/1.vtt", (background_clip["desired_width"], background_clip["desired_height"]), 120, fix_interpunction=True, fixed_inter_path="stories/1.txt")
 
-    audio = AudioFileClip("out.mp3")
+    audio = AudioFileClip("audio/1.mp3")
 
     final_clip = CompositeVideoClip([background_clip['clip']] + subtitle_clips)
     final_clip = final_clip.set_audio(audio)
 
-    final_clip = final_clip.subclip(0, LIMIT_SECONDS)
+    if LIMIT_SECONDS:
+        final_clip = final_clip.subclip(0, LIMIT_SECONDS)
 
-    final_clip.write_videofile("final.mp4", codec="libx264", fps=60)
+    final_clip.write_videofile("final.mp4", codec="libx264", fps=FPS)
 
 def main():
+    if not check_magick():
+        return
+    
     compile_final()
 
 if __name__ == "__main__":
