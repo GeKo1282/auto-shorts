@@ -3,11 +3,12 @@ from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, clips_ar
 from typing import Tuple, List, Union, Dict
 
 # Temporary
-INTERPUNCTION = [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'"]
-LIMIT_SECONDS = 60
-FPS = 15
+INTERPUNCTION = [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'", "-"]
+LIMIT_SECONDS = None
+FPS = 60
 LIMIT_SUB_WORDS = None
 SUBTITLE_PAGE_CHARACTER_LIMIT = 8
+ESTIMATION_IT_PER_SEC = 10
 FONT_PATH = os.path.abspath("KOMIKAX_.ttf")
 RESOLUTIONS = [
     144,
@@ -20,8 +21,15 @@ RESOLUTIONS = [
     2160
 ]
 
+def format_time(seconds: float):
+    hours = int(seconds // 3600)
+    minutes = int(seconds % 3600 // 60)
+    seconds = int(seconds % 60)
+
+    return (f"{hours:02}:" if hours > 0 else "") + (f"{minutes:02}:" if minutes > 0 else "") + f"{seconds:02}" + (f".{str(seconds).split('.')[1][:2]}" if seconds % 1 != 0 else "")
+
 def check_magick():
-    if os.system("magick --version") != 0:
+    if os.system("magick --version >/dev/null 2>&1") != 0:
         print("Error: ImageMagick is not installed. Please install it before running the script.")
         return False
 
@@ -40,10 +48,13 @@ def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, i
             clips.append({
                 "clip": VideoFileClip(clip["clip"]),
                 "weight": clip["weight"],
-                "zoom": clip["zoom"]
+                "zoom": clip["zoom"],
+                "start_at": clip["start_at"]
             })
         else:
             clips.append(clip)
+
+        clips[-1]["clip"] = clips[-1]["clip"].subclip(clips[-1]["start_at"], clips[-1]["clip"].duration)
 
         clips.append({
             "clip": None,
@@ -231,22 +242,27 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], fon
     return clips
 
 def compile_final():
-    background_clip = compile_background(*[{k:v for k, v in zip(("clip", "weight", "zoom"), (path, weight, zoom))} for path, weight, zoom in zip(
+    background_clip = compile_background(*[{k:v for k, v in zip(("clip", "weight", "zoom", "start_at"), (path, weight, zoom, start_at))} for path, weight, zoom, start_at in zip(
         [f"source/{p}" for p in os.listdir("source")],
         [39, 60],
-        [1.5, 1]
+        [1.5, 1],
+        [60, 60]
     )])
-    subtitle_clips = compile_subtitles("audio/1.vtt", (background_clip["desired_width"], background_clip["desired_height"]), 120, fix_interpunction=True, fixed_inter_path="stories/1.txt")
+    subtitle_clips = compile_subtitles("audio/5.vtt", (background_clip["desired_width"], background_clip["desired_height"]), 100, fix_interpunction=True, fixed_inter_path="stories/5.txt")
 
-    audio = AudioFileClip("audio/1.mp3")
+    audio = AudioFileClip("audio/5.mp3")
 
     final_clip = CompositeVideoClip([background_clip['clip']] + subtitle_clips)
     final_clip = final_clip.set_audio(audio)
 
     if LIMIT_SECONDS:
         final_clip = final_clip.subclip(0, LIMIT_SECONDS)
+    else:
+        final_clip = final_clip.subclip(0, audio.duration)
 
-    final_clip.write_videofile("final.mp4", codec="libx264", fps=FPS)
+    print(f"Compiling final video ({format_time(audio.duration)}). Estimated compilation time: ~{format_time(audio.duration * FPS / ESTIMATION_IT_PER_SEC)}. Please wait...")
+
+    final_clip.write_videofile(f"finals/5-final{FPS}.mp4", codec="libx264", fps=FPS)
 
 def main():
     if not check_magick():
@@ -257,5 +273,11 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO: Add indentation to subtitles
-# TODO: Create per-word subtitle clips, then combine them into a single subtitle clip by measuring their positions.
+#TODO: De-hardcode the paths and parameters
+#DONE: Automatically adjust length of background clip to audio and subtitles
+#TODO: Estimate size of the text and warn if too big
+#TODO: Async and add eta timers and progress bars
+#TODO: Provide console-based interface
+#TODO: Create simple web interface with controls, progress and file uploads and downloads
+    #TODO: Add option to remotely download background clips from youtube
+#TODO: Fancy layouts
