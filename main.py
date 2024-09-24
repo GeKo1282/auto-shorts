@@ -3,11 +3,10 @@ from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, clips_ar
 from typing import Tuple, List, Union, Dict
 
 # Temporary
-INTERPUNCTION = [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'", "-"]
+INTERPUNCTION = [".", ",", "!", "?", ":", ";", "(", ")", "[", "]", "{", "}", "<", ">", "\"", "'", "-", "&"]
 LIMIT_SECONDS = None
 FPS = 60
 LIMIT_SUB_WORDS = None
-SUBTITLE_PAGE_CHARACTER_LIMIT = 8
 ESTIMATION_IT_PER_SEC = 10
 FONT_PATH = os.path.abspath("KOMIKAX_.ttf")
 RESOLUTIONS = [
@@ -40,7 +39,7 @@ def clip_max_crop(clip_height, clip_width, ratio, zoom):
 
     return (int(clip_height / zoom), int(clip_height * ratio / zoom)) if clip_height * ratio <= clip_width else (int(clip_width / ratio / zoom), int(clip_width / zoom))
 
-def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, int]]]):
+def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, int]]], ratio:float = (9/16), line_width:int = 4, line_color:Tuple[int, int, int] = (255, 255, 255)):
     clips = []
 
     for clip in source_clips:
@@ -65,9 +64,9 @@ def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, i
     clips = clips[:-1]
 
     final_clip = {
-        "ratio": 9 / 16,
-        "line_width": 4,
-        "line_color": (255, 255, 255),
+        "ratio": ratio,
+        "line_width": line_width,
+        "line_color": line_color,
         "total_weight": sum([clip["weight"] for clip in clips])
     }
 
@@ -146,7 +145,7 @@ def compile_background(*source_clips: List[Dict[str, Union[str, VideoFileClip, i
 
     return final_clip
 
-def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], font_size: int = 170, font_color: str = "white", stroke_color: Tuple[int, int, int] = "black", stroke_width: int = 7, *, fix_interpunction: bool = True, fixed_inter_path: str = None):
+def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], font_size: int = 170, font_color: str = "white", stroke_color: Tuple[int, int, int] = "black", stroke_width: int = 7, *, fix_interpunction: bool = True, fixed_inter_path: str = None, max_page_characters: int = 10):
     def find_leading_interpunction(text: str):
         final_interpunction = ""
         
@@ -184,7 +183,7 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], fon
             continue
 
         start, end = sub.split("\n")[0].split(" --> ")
-        text = sub.replace(f"{start} --> {end}\n", "").strip()
+        text = sub.replace(f"{start} --> {end}\n", "").strip().replace("&amp;", "&")
 
         if fix_interpunction:
             fixed_inter = fixed_inter.strip()
@@ -222,7 +221,8 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], fon
         if not subtitles:
             break
 
-        if len(pages[-1]) > 0 and (sum([len(sub['text']) for sub in pages[-1]]) + len(subtitles[0]['text']) >= SUBTITLE_PAGE_CHARACTER_LIMIT or any([pages[-1][-1]['text'].endswith(i) for i in INTERPUNCTION])):
+        #                                                                         spaces \/\/\/
+        if len(pages[-1]) > 0 and (sum([len(sub['text']) for sub in pages[-1]]) + len(pages[-1]) + len(subtitles[0]['text']) >= max_page_characters or any([pages[-1][-1]['text'].endswith(i) for i in INTERPUNCTION])):
             pages.append([])
 
         sub = subtitles.pop(0)
@@ -242,17 +242,45 @@ def compile_subtitles(sub_file_path: str, video_dimentions: Tuple[int, int], fon
     return clips
 
 def compile_final():
-    background_clip = compile_background(*[{k:v for k, v in zip(("clip", "weight", "zoom", "start_at"), (path, weight, zoom, start_at))} for path, weight, zoom, start_at in zip(
-        [f"source/{p}" for p in os.listdir("source")],
-        [39, 60],
-        [1.5, 1],
-        [60, 60]
-    )])
-    subtitle_clips = compile_subtitles("audio/5.vtt", (background_clip["desired_width"], background_clip["desired_height"]), 100, fix_interpunction=True, fixed_inter_path="stories/5.txt")
+    settings_vertical = {
+        "source_clips": [
+            ["source/Minecraft Parkour Gameplay No Copyright (4K) [FzI-c9qRnAo].mp4", 60, 1, 1590],
+            ["source/1H Kinetic Sand Compilation [etp46ca_UM].webm", 39, 1.5, 420]
+        ],
+        "ratio": (9/16),
+        "subtitles_path": "audio/15-sped5.vtt",
+        "fixed_inter_path": "stories/15.txt",
+        "audio_path": "audio/15-sped5.mp3",
+        "font_size": 140,
+        "max_page_characters": 10,
+        "output_path": "finals/15-sped5-final.mp4"
+    }
 
-    audio = AudioFileClip("audio/5.mp3")
+    settings_horizontal = {
+        "source_clips": [
+            ["source/Minecraft Parkour Gameplay No Copyright (4K) [70ggyLzxl_4].mp4", 100, 1, 0]
+        ],
+        "ratio": (16/9),
+        "subtitles_path": "audio/long-2-sped5.vtt",
+        "fixed_inter_path": "stories/long-2.txt",
+        "audio_path": "audio/long-2-sped5.mp3",
+        "font_size": 140,
+        "max_page_characters": 25,
+        "output_path": "finals/long-2-sped5-final.mp4"
+    }
 
-    final_clip = CompositeVideoClip([background_clip['clip']] + subtitle_clips)
+    settings = settings_horizontal
+
+    background_clip = compile_background(*[{k:v for k, v in zip(("clip", "weight", "zoom", "start_at"), (path, weight, zoom, start_at))} for path, weight, zoom, start_at in settings["source_clips"]], ratio=settings['ratio'])
+
+    subtitle_clips = compile_subtitles(settings["subtitles_path"], (background_clip["desired_width"], background_clip["desired_height"]), settings["font_size"], fix_interpunction=True, fixed_inter_path=settings["fixed_inter_path"], max_page_characters=settings["max_page_characters"])
+
+    audio = AudioFileClip(settings["audio_path"])
+
+    if background_clip['clip'].duration < audio.duration:
+        print(f"Warning: The background clip is shorter than the audio. The background clip will dissapear after {format_time(background_clip['clip'].duration)}.")
+
+    final_clip = CompositeVideoClip([background_clip['clip'], *subtitle_clips])
     final_clip = final_clip.set_audio(audio)
 
     if LIMIT_SECONDS:
@@ -262,7 +290,7 @@ def compile_final():
 
     print(f"Compiling final video ({format_time(audio.duration)}). Estimated compilation time: ~{format_time(audio.duration * FPS / ESTIMATION_IT_PER_SEC)}. Please wait...")
 
-    final_clip.write_videofile(f"finals/5-final{FPS}.mp4", codec="libx264", fps=FPS)
+    final_clip.write_videofile(settings['output_path'], codec="libx264", fps=FPS, threads=8)
 
 def main():
     if not check_magick():
